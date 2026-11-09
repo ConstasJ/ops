@@ -38,6 +38,8 @@ func NewRootCommand() *cobra.Command {
 	// Add subcommands
 	rootCmd.AddCommand(newVersionCommand())
 	rootCmd.AddCommand(newPingCommand())
+	rootCmd.AddCommand(newStatusCommand())
+	rootCmd.AddCommand(newLsCommand())
 
 	return rootCmd
 }
