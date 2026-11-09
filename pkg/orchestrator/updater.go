@@ -349,7 +349,13 @@ func (o *Orchestrator) pullImage(ctx context.Context, ref string) error {
 	if o.dockerClient == nil {
 		return fmt.Errorf("docker client is nil")
 	}
-	resp, err := o.dockerClient.Engine().ImagePull(ctx, ref, client.ImagePullOptions{})
+
+	opts := client.ImagePullOptions{}
+	if auth, err := o.dockerClient.RegistryAuthHeader(ref); err == nil && auth != "" {
+		opts.RegistryAuth = auth
+	}
+
+	resp, err := o.dockerClient.Engine().ImagePull(ctx, ref, opts)
 	if err != nil {
 		return err
 	}

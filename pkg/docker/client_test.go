@@ -55,4 +55,9 @@ func TestNewClient_MockServer(t *testing.T) {
 	// Verify Engine and Compose interfaces are accessible
 	assert.NotNil(t, c.Engine())
 	assert.NotNil(t, c.Compose())
+
+	// Test RegistryAuthHeader
+	auth, err := c.RegistryAuthHeader("alpine:latest")
+	assert.NoError(t, err)
+	_ = auth
 }

@@ -88,6 +88,15 @@ func (c *Client) Compose() api.Compose {
 	return c.compose
 }
 
+// RegistryAuthHeader retrieves the base64url-encoded registry auth header for a given image reference
+// using the Docker CLI configuration and credential helpers.
+func (c *Client) RegistryAuthHeader(imageRef string) (string, error) {
+	if c.cli == nil || c.cli.ConfigFile() == nil {
+		return "", nil
+	}
+	return command.RetrieveAuthTokenFromImage(c.cli.ConfigFile(), imageRef)
+}
+
 // Close closes the underlying engine client
 func (c *Client) Close() error {
 	if c.engine != nil {
