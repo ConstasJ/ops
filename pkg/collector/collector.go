@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"ops-go/pkg/config"
 	"ops-go/pkg/docker"
 	"ops-go/pkg/domain"
 )
@@ -84,6 +85,9 @@ func (col *Collector) Collect(ctx context.Context) ([]ContainerInfo, error) {
 
 		isAuto := labels["wud.trigger.dockercompose.local.enabled"] == "true"
 		spec := col.ResolveSpec(name, isAuto)
+		if opsLabelSpec := config.ParseLabels(labels); opsLabelSpec != nil {
+			spec = config.MergeSpec(spec, opsLabelSpec)
+		}
 
 		var files []string
 		if rawFiles := labels["com.docker.compose.project.config_files"]; rawFiles != "" {
