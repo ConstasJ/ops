@@ -107,6 +107,18 @@ func newUpgradeCommand() *cobra.Command {
 						return gctx.Err()
 					}
 
+					// 检查是否发生 Compose 配置漂移
+					if c.HasDrift && c.DeclaredImage != "" {
+						cand := registry.CompareImageRefs(c.ImageRef, c.DeclaredImage)
+						mu.Lock()
+						tasks = append(tasks, upgradeTask{
+							container: c,
+							candidate: cand,
+						})
+						mu.Unlock()
+						return nil
+					}
+
 					var localDigest string
 					imgInspect, err := cli.Engine().ImageInspect(gctx, c.ImageID)
 					if err == nil && len(imgInspect.RepoDigests) > 0 {
@@ -187,11 +199,15 @@ func newUpgradeCommand() *cobra.Command {
 					DryRun:    true,
 				}
 				for _, t := range tasks {
+					targetImg := t.candidate.TargetTag
+					if t.container.HasDrift && t.container.DeclaredImage != "" {
+						targetImg = t.container.DeclaredImage
+					}
 					summary.Items = append(summary.Items, report.ItemResult{
 						Service:  t.container.Service,
 						Stack:    t.container.Project,
 						OldImage: t.container.ImageRef,
-						NewImage: t.candidate.TargetTag,
+						NewImage: targetImg,
 						Status:   report.StatusSuccess,
 						Duration: 10 * time.Millisecond,
 					})
@@ -253,6 +269,10 @@ func newUpgradeCommand() *cobra.Command {
 				opts := orchestrator.UpdateOptions{
 					Tag:   t.candidate.TargetTag,
 					Force: forceFlag,
+				}
+				if t.container.HasDrift && t.container.DeclaredImage != "" {
+					opts.Image = t.container.DeclaredImage
+					opts.Tag = ""
 				}
 
 				orchReport, updateErr := orch.UpdateContainer(ctx, &t.container, opts)

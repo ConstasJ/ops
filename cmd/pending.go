@@ -104,6 +104,18 @@ func newPendingCommand() *cobra.Command {
 						return nil
 					}
 
+					// 检查是否发生 Compose 配置漂移 (Compose 文件声明与运行中容器镜像不一致)
+					if c.HasDrift && c.DeclaredImage != "" {
+						cand := registry.CompareImageRefs(c.ImageRef, c.DeclaredImage)
+						mu.Lock()
+						results = append(results, pendingResult{
+							container: c,
+							candidate: cand,
+						})
+						mu.Unlock()
+						return nil
+					}
+
 					// 获取本地 image inspect 信息提取 RepoDigests
 					var localDigest string
 					imgInspect, err := cli.Engine().ImageInspect(gctx, c.ImageID)
@@ -210,6 +222,8 @@ func newPendingCommand() *cobra.Command {
 						typeFormatted = pterm.FgCyan.Sprint("PATCH")
 					case registry.UpdateDigest:
 						typeFormatted = pterm.FgBlue.Sprint("DIGEST")
+					case registry.UpdateCompose:
+						typeFormatted = pterm.FgMagenta.Sprint("COMPOSE")
 					default:
 						typeFormatted = string(cand.UpdateType)
 					}

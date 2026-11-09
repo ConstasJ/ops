@@ -11,11 +11,12 @@ import (
 type UpdateType string
 
 const (
-	UpdateNone   UpdateType = "none"
-	UpdateDigest UpdateType = "digest"
-	UpdatePatch  UpdateType = "patch"
-	UpdateMinor  UpdateType = "minor"
-	UpdateMajor  UpdateType = "major"
+	UpdateNone    UpdateType = "none"
+	UpdateDigest  UpdateType = "digest"
+	UpdatePatch   UpdateType = "patch"
+	UpdateMinor   UpdateType = "minor"
+	UpdateMajor   UpdateType = "major"
+	UpdateCompose UpdateType = "compose"
 )
 
 // UpdateCandidate 镜像升级评估结果
@@ -188,3 +189,47 @@ func EvaluateUpdate(currentRef string, remoteTags []string, currentDigest, remot
 
 	return result
 }
+
+// CompareImageRefs 比较两个镜像引用的版本差异类型（major / minor / patch / digest / compose）
+func CompareImageRefs(currentRef, targetRef string) UpdateCandidate {
+	_, currTag, _ := ParseImageReference(currentRef)
+	_, targetTag, _ := ParseImageReference(targetRef)
+	if currTag == "" {
+		currTag = "latest"
+	}
+	if targetTag == "" {
+		targetTag = "latest"
+	}
+
+	currInfo := parseTag(currTag)
+	targetInfo := parseTag(targetTag)
+
+	updateType := UpdateCompose
+	reason := "Compose 声明已变更"
+
+	if currInfo != nil && targetInfo != nil {
+		if targetInfo.version.GreaterThan(currInfo.version) {
+			if targetInfo.version.Major() > currInfo.version.Major() {
+				updateType = UpdateMajor
+				reason = "Compose 声明重大版本更新 (Major)"
+			} else if targetInfo.version.Minor() > currInfo.version.Minor() {
+				updateType = UpdateMinor
+				reason = "Compose 声明次版本更新 (Minor)"
+			} else {
+				updateType = UpdatePatch
+				reason = "Compose 声明补丁更新 (Patch)"
+			}
+		} else if targetInfo.version.LessThan(currInfo.version) {
+			reason = "Compose 声明版本降级或回退"
+		}
+	}
+
+	return UpdateCandidate{
+		HasUpdate:  true,
+		CurrentTag: currTag,
+		TargetTag:  targetTag,
+		UpdateType: updateType,
+		Reason:     reason,
+	}
+}
+

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"ops-go/pkg/compose"
 	"ops-go/pkg/config"
 	"ops-go/pkg/docker"
 	"ops-go/pkg/domain"
@@ -135,21 +136,36 @@ func (col *Collector) Collect(ctx context.Context) ([]ContainerInfo, error) {
 			imageID = c.Image
 		}
 
+		declaredImage := ""
+		hasDrift := false
+		serviceName := labels["com.docker.compose.service"]
+		workingDir := labels["com.docker.compose.project.working_dir"]
+		if len(files) > 0 && serviceName != "" {
+			if declared, err := compose.GetDeclaredImage(files, workingDir, serviceName); err == nil && declared != "" {
+				declaredImage = declared
+				if !isSameImageRef(imageRef, declaredImage) {
+					hasDrift = true
+				}
+			}
+		}
+
 		info := ContainerInfo{
-			ID:           summary.ID,
-			Name:         name,
-			ImageRef:     imageRef,
-			ImageID:      imageID,
-			State:        stateStatus,
-			Health:       healthStatus,
-			RestartCount: restartCount,
-			ExitCode:     exitCode,
-			StartedAt:    startedAt,
-			Project:      labels["com.docker.compose.project"],
-			Service:      labels["com.docker.compose.service"],
-			Files:        files,
-			WorkingDir:   labels["com.docker.compose.project.working_dir"],
-			Auto:         isAuto,
+			ID:            summary.ID,
+			Name:          name,
+			ImageRef:      imageRef,
+			ImageID:       imageID,
+			DeclaredImage: declaredImage,
+			HasDrift:      hasDrift,
+			State:         stateStatus,
+			Health:        healthStatus,
+			RestartCount:  restartCount,
+			ExitCode:      exitCode,
+			StartedAt:     startedAt,
+			Project:       labels["com.docker.compose.project"],
+			Service:       serviceName,
+			Files:         files,
+			WorkingDir:    workingDir,
+			Auto:          isAuto,
 
 			Kind:      spec.Kind,
 			Guard:     spec.EffectiveGuard(),
@@ -299,3 +315,23 @@ func FindInList(containers []ContainerInfo, target string) (*ContainerInfo, erro
 	}
 	return nil, fmt.Errorf("找不到容器 %q", target)
 }
+
+func isSameImageRef(a, b string) bool {
+	if a == b {
+		return true
+	}
+	normA := normalizeImageRef(a)
+	normB := normalizeImageRef(b)
+	return normA == normB
+}
+
+func normalizeImageRef(ref string) string {
+	ref = strings.TrimPrefix(ref, "docker.io/library/")
+	ref = strings.TrimPrefix(ref, "docker.io/")
+	// 如果不带 tag 且不带 digest，规范化加上 :latest
+	if !strings.Contains(ref, ":") && !strings.Contains(ref, "@") {
+		ref += ":latest"
+	}
+	return ref
+}
+

@@ -102,3 +102,23 @@ func TestEvaluateUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestCompareImageRefs(t *testing.T) {
+	c1 := CompareImageRefs("gitea/gitea:1.22.0", "gitea/gitea:1.22.1")
+	assert.True(t, c1.HasUpdate)
+	assert.Equal(t, UpdatePatch, c1.UpdateType)
+	assert.Equal(t, "1.22.0", c1.CurrentTag)
+	assert.Equal(t, "1.22.1", c1.TargetTag)
+
+	c2 := CompareImageRefs("redis:7.0-alpine", "redis:7.2-alpine")
+	assert.True(t, c2.HasUpdate)
+	assert.Equal(t, UpdateMinor, c2.UpdateType)
+
+	c3 := CompareImageRefs("postgres:15", "postgres:16")
+	assert.True(t, c3.HasUpdate)
+	assert.Equal(t, UpdateMajor, c3.UpdateType)
+
+	c4 := CompareImageRefs("myimage:abc", "myimage:xyz")
+	assert.True(t, c4.HasUpdate)
+	assert.Equal(t, UpdateCompose, c4.UpdateType)
+}

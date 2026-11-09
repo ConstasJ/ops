@@ -24,6 +24,9 @@ type ContainerInfo struct {
 	WorkingDir   string
 	Auto         bool
 
+	DeclaredImage string // Compose 文件中声明的镜像引用
+	HasDrift      bool   // 声明镜像与当前运行中容器镜像是否存在配置漂移
+
 	Kind      string
 	Guard     domain.GuardLevel
 	Notes     string

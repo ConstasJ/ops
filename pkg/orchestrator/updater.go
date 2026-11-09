@@ -147,6 +147,9 @@ func (o *Orchestrator) UpdateContainer(ctx context.Context, c *collector.Contain
 	}
 
 	targetImage := ResolveTargetImage(c.ImageRef, opts.Tag, opts.Image)
+	if opts.Tag == "" && opts.Image == "" && c.HasDrift && c.DeclaredImage != "" {
+		targetImage = c.DeclaredImage
+	}
 	report.NewImageRef = targetImage
 
 	// 3. Dry-run Check
