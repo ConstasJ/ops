@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -69,9 +70,16 @@ func (col *Collector) Collect(ctx context.Context) ([]ContainerInfo, error) {
 		}
 		c := inspectRes.Container
 
-		labels := summary.Labels
-		if labels == nil {
-			labels = make(map[string]string)
+		labels := make(map[string]string)
+		for k, v := range summary.Labels {
+			labels[k] = v
+		}
+		if c.Config != nil {
+			for k, v := range c.Config.Labels {
+				if _, exists := labels[k]; !exists {
+					labels[k] = v
+				}
+			}
 		}
 
 		isAuto := labels["wud.trigger.dockercompose.local.enabled"] == "true"
@@ -83,6 +91,12 @@ func (col *Collector) Collect(ctx context.Context) ([]ContainerInfo, error) {
 				if trimmed := strings.TrimSpace(f); trimmed != "" {
 					files = append(files, trimmed)
 				}
+			}
+		} else if workdir := labels["com.docker.compose.project.working_dir"]; workdir != "" {
+			for _, candidate := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+				candidatePath := filepath.Join(workdir, candidate)
+				files = append(files, candidatePath)
+				break
 			}
 		}
 
@@ -108,11 +122,20 @@ func (col *Collector) Collect(ctx context.Context) ([]ContainerInfo, error) {
 			exitCode = c.State.ExitCode
 		}
 
+		imageRef := summary.Image
+		if c.Config != nil && c.Config.Image != "" {
+			imageRef = c.Config.Image
+		}
+		imageID := summary.ImageID
+		if c.Image != "" {
+			imageID = c.Image
+		}
+
 		info := ContainerInfo{
 			ID:           summary.ID,
 			Name:         name,
-			ImageRef:     summary.Image,
-			ImageID:      summary.ImageID,
+			ImageRef:     imageRef,
+			ImageID:      imageID,
 			State:        stateStatus,
 			Health:       healthStatus,
 			RestartCount: restartCount,
@@ -155,53 +178,120 @@ func (col *Collector) Find(ctx context.Context, target string) (*ContainerInfo, 
 	return FindInList(containers, target)
 }
 
+// ResolveTargets resolves multiple targets (names, project/service, service, or project/stack)
+func (col *Collector) ResolveTargets(ctx context.Context, targets []string) ([]ContainerInfo, error) {
+	containers, err := col.Collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ResolveTargetsInList(containers, targets)
+}
+
+// ResolveTargetsInList resolves target strings against a slice of ContainerInfo
+func ResolveTargetsInList(containers []ContainerInfo, targets []string) ([]ContainerInfo, error) {
+	var results []ContainerInfo
+	seen := make(map[string]bool)
+
+	for _, rawTarget := range targets {
+		target := strings.TrimSpace(rawTarget)
+		if target == "" {
+			continue
+		}
+
+		var matched []ContainerInfo
+
+		// 1. Exact name match
+		for _, c := range containers {
+			if strings.EqualFold(c.Name, target) {
+				matched = append(matched, c)
+			}
+		}
+
+		// 2. Exact project/service match (e.g. "linknet/db")
+		if len(matched) == 0 {
+			for _, c := range containers {
+				if strings.EqualFold(c.StackService(), target) {
+					matched = append(matched, c)
+				}
+			}
+		}
+
+		// 3. Project / Stack name match (e.g. "optest2", "linknet")
+		if len(matched) == 0 {
+			for _, c := range containers {
+				if strings.EqualFold(c.Project, target) {
+					matched = append(matched, c)
+				}
+			}
+		}
+
+		// 4. Exact service match if project is non-empty
+		if len(matched) == 0 {
+			for _, c := range containers {
+				if c.Service != "" && strings.EqualFold(c.Service, target) {
+					matched = append(matched, c)
+				}
+			}
+			if len(matched) > 1 {
+				var names []string
+				for _, m := range matched {
+					names = append(names, m.Name)
+				}
+				return nil, fmt.Errorf("服务名 %q 在多个项目中存在，请使用 project/service 明确指定: %s", target, strings.Join(names, ", "))
+			}
+		}
+
+		// 5. Substring match on name
+		if len(matched) == 0 {
+			targetLower := strings.ToLower(target)
+			for _, c := range containers {
+				if strings.Contains(strings.ToLower(c.Name), targetLower) {
+					matched = append(matched, c)
+				}
+			}
+			if len(matched) > 1 {
+				var names []string
+				for _, m := range matched {
+					names = append(names, m.Name)
+				}
+				return nil, fmt.Errorf("目标 %q 匹配到多个容器: %s", target, strings.Join(names, ", "))
+			}
+		}
+
+		if len(matched) == 0 {
+			return nil, fmt.Errorf("找不到容器或项目 %q", target)
+		}
+
+		for _, m := range matched {
+			key := m.ID
+			if key == "" {
+				key = m.Name
+			}
+			if !seen[key] {
+				seen[key] = true
+				results = append(results, m)
+			}
+		}
+	}
+
+	return results, nil
+}
+
 // FindInList searches a pre-collected list of containers
 func FindInList(containers []ContainerInfo, target string) (*ContainerInfo, error) {
-	targetLower := strings.ToLower(target)
-
-	// 1. Exact name match
-	for _, c := range containers {
-		if strings.EqualFold(c.Name, target) {
-			return &c, nil
-		}
+	resolved, err := ResolveTargetsInList(containers, []string{target})
+	if err != nil {
+		return nil, err
 	}
-
-	// 2. Exact project/service match (e.g. "linknet/db")
-	for _, c := range containers {
-		if strings.EqualFold(c.StackService(), target) {
-			return &c, nil
-		}
+	if len(resolved) == 1 {
+		return &resolved[0], nil
 	}
-
-	// 3. Exact service match if project is non-empty
-	var serviceMatches []ContainerInfo
-	for _, c := range containers {
-		if c.Service != "" && strings.EqualFold(c.Service, target) {
-			serviceMatches = append(serviceMatches, c)
-		}
-	}
-	if len(serviceMatches) == 1 {
-		return &serviceMatches[0], nil
-	}
-
-	// 4. Substring match on name
-	var subMatches []ContainerInfo
-	for _, c := range containers {
-		if strings.Contains(strings.ToLower(c.Name), targetLower) {
-			subMatches = append(subMatches, c)
-		}
-	}
-
-	if len(subMatches) == 1 {
-		return &subMatches[0], nil
-	}
-	if len(subMatches) > 1 {
+	if len(resolved) > 1 {
 		var names []string
-		for _, m := range subMatches {
+		for _, m := range resolved {
 			names = append(names, m.Name)
 		}
 		return nil, fmt.Errorf("目标 %q 匹配到多个容器: %s", target, strings.Join(names, ", "))
 	}
-
 	return nil, fmt.Errorf("找不到容器 %q", target)
 }

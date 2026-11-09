@@ -10,6 +10,10 @@ import (
 	"ops-go/pkg/orchestrator"
 )
 
+var (
+	rollbackYesFlag bool
+)
+
 func newRollbackCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rollback <目标>",
@@ -44,6 +48,8 @@ func newRollbackCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVarP(&rollbackYesFlag, "yes", "y", false, "自动确认执行，无需交互确认")
 
 	return cmd
 }

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,11 +105,6 @@ func ResolveTargetImage(currentRef, optTag, optImage string) string {
 
 // Update executes the controlled update workflow for a target container
 func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOptions) (*UpdateReport, error) {
-	start := time.Now()
-	report := &UpdateReport{
-		Target: target,
-	}
-
 	// 1. Find target container
 	var c *collector.ContainerInfo
 	var err error
@@ -120,17 +116,26 @@ func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOpt
 		c, err = col.Find(ctx, target)
 	}
 	if err != nil {
-		report.Status = "failed"
-		report.Message = err.Error()
-		report.Duration = time.Since(start)
-		return report, err
+		return &UpdateReport{
+			Target:  target,
+			Status:  "failed",
+			Message: err.Error(),
+		}, err
 	}
+	return o.UpdateContainer(ctx, c, opts)
+}
 
-	report.Container = c.Name
-	report.Project = c.Project
-	report.Service = c.Service
-	report.OldImageRef = c.ImageRef
-	report.OldImageID = c.ImageID
+// UpdateContainer executes the controlled update workflow for a specific container
+func (o *Orchestrator) UpdateContainer(ctx context.Context, c *collector.ContainerInfo, opts UpdateOptions) (*UpdateReport, error) {
+	start := time.Now()
+	report := &UpdateReport{
+		Target:      c.Name,
+		Container:   c.Name,
+		Project:     c.Project,
+		Service:     c.Service,
+		OldImageRef: c.ImageRef,
+		OldImageID:  c.ImageID,
+	}
 
 	// 2. Guard Level Gate
 	if (c.Guard == domain.GuardFrozen || c.Guard == domain.GuardLocked) && !opts.Force {
@@ -215,7 +220,7 @@ func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOpt
 	}
 
 	// 9. Compose Up with --no-deps
-	if err := o.runComposeUp(ctx, composeFile, serviceName); err != nil {
+	if err := o.runComposeUp(ctx, composeFile, serviceName, c.Project); err != nil {
 		// Compose Up failed, rollback immediately
 		_ = o.handleRollback(ctx, c, composeFile, serviceName, targetImage, modifyRes, fmt.Sprintf("compose up 失败: %v", err))
 		report.Status = "rolled_back"
@@ -237,6 +242,10 @@ func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOpt
 
 	// 11. Record Success to State
 	nowStr := time.Now().Format(time.RFC3339)
+	backupRecord := report.BackupPath
+	if backupRecord == "" {
+		backupRecord = composeFile
+	}
 	entry := domain.HistoryEntry{
 		At:         nowStr,
 		Result:     "success",
@@ -245,7 +254,7 @@ func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOpt
 		PrevRef:    c.ImageRef,
 		RefAfter:   targetImage,
 		Note:       fmt.Sprintf("updated from %s to %s", c.ImageRef, targetImage),
-		BackupPath: report.BackupPath,
+		BackupPath: backupRecord,
 	}
 	_ = o.stateManager.RecordUpdate(c.Name, entry)
 
@@ -256,14 +265,62 @@ func (o *Orchestrator) Update(ctx context.Context, target string, opts UpdateOpt
 }
 
 func (o *Orchestrator) locateComposeFileAndService(c *collector.ContainerInfo) (string, string, error) {
-	if len(c.Files) == 0 {
-		return "", "", fmt.Errorf("容器 %s 未关联 Compose 配置文件", c.Name)
-	}
 	serviceName := c.Service
 	if serviceName == "" {
 		serviceName = c.Name
 	}
-	return c.Files[0], serviceName, nil
+
+	composeFile := ""
+	if len(c.Files) > 0 {
+		composeFile = c.Files[0]
+	}
+
+	// Fallback to checking state.json history for BackupPath
+	if composeFile == "" && o.stateManager != nil {
+		if state, err := o.stateManager.Load(); err == nil {
+			if cs, ok := state.Containers[c.Name]; ok {
+				for i := len(cs.History) - 1; i >= 0; i-- {
+					bp := cs.History[i].BackupPath
+					if bp != "" {
+						origFile := bp
+						if strings.Contains(bp, ".ops-bak-") {
+							origFile = strings.Split(bp, ".ops-bak-")[0]
+						}
+						composeFile = origFile
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if composeFile == "" {
+		return "", "", fmt.Errorf("容器 %s 未关联 Compose 配置文件", c.Name)
+	}
+
+	// If serviceName equals container name, try to map to actual compose service name
+	if serviceName == c.Name {
+		proj, err := loader.LoadWithContext(context.Background(), types.ConfigDetails{
+			WorkingDir:  filepath.Dir(composeFile),
+			ConfigFiles: []types.ConfigFile{{Filename: composeFile}},
+		}, loader.WithSkipValidation, func(opts *loader.Options) { opts.SetProjectName("res", true) })
+		if err == nil {
+			for name, svc := range proj.Services {
+				if svc.ContainerName == c.Name {
+					serviceName = name
+					break
+				}
+			}
+			if serviceName == c.Name && len(proj.Services) == 1 {
+				for name := range proj.Services {
+					serviceName = name
+					break
+				}
+			}
+		}
+	}
+
+	return composeFile, serviceName, nil
 }
 
 func (o *Orchestrator) pullImage(ctx context.Context, ref string) error {
@@ -277,6 +334,8 @@ func (o *Orchestrator) pullImage(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
+	_, _ = io.Copy(io.Discard, resp)
 	return resp.Wait(ctx)
 }
 
@@ -319,7 +378,7 @@ func (o *Orchestrator) executeDump(ctx context.Context, c *collector.ContainerIn
 	return dp.Dump(ctx, c, o.backupBase)
 }
 
-func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, service string) error {
+func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, service string, projectName string) (upErr error) {
 	if o.composeUpper != nil {
 		return o.composeUpper(ctx, composeFile, service)
 	}
@@ -327,32 +386,102 @@ func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, ser
 		return fmt.Errorf("docker client is nil")
 	}
 
+	if projectName == "" {
+		projectName = filepath.Base(filepath.Dir(composeFile))
+	}
+
 	proj, err := loader.LoadWithContext(ctx, types.ConfigDetails{
 		WorkingDir: filepath.Dir(composeFile),
 		ConfigFiles: []types.ConfigFile{
 			{Filename: composeFile},
 		},
+	}, func(opts *loader.Options) {
+		opts.SetProjectName(projectName, true)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load compose file %s: %w", composeFile, err)
 	}
 
-	proj, err = proj.WithSelectedServices([]string{service}, types.IgnoreDependencies)
-	if err != nil {
-		return fmt.Errorf("failed to select service %s: %w", service, err)
+	// Resolve target service name: if not directly matching a compose service, resolve via ContainerName
+	targetService := service
+	if _, err := proj.GetService(targetService); err != nil {
+		for name, svc := range proj.Services {
+			if svc.ContainerName == service {
+				targetService = name
+				break
+			}
+		}
+		if _, err := proj.GetService(targetService); err != nil && len(proj.Services) == 1 {
+			for name := range proj.Services {
+				targetService = name
+				break
+			}
+		}
 	}
 
-	return o.dockerClient.Compose().Up(ctx, proj, api.UpOptions{
+	proj, err = proj.WithSelectedServices([]string{targetService}, types.IgnoreDependencies)
+	if err != nil {
+		return fmt.Errorf("failed to select service %s: %w", targetService, err)
+	}
+
+	absComposeFile, _ := filepath.Abs(composeFile)
+	workingDir := filepath.Dir(absComposeFile)
+	svc := proj.Services[targetService]
+	if svc.CustomLabels == nil {
+		svc.CustomLabels = make(map[string]string)
+	}
+	svc.CustomLabels[api.ProjectLabel] = projectName
+	svc.CustomLabels[api.ServiceLabel] = targetService
+	svc.CustomLabels[api.ConfigFilesLabel] = absComposeFile
+	svc.CustomLabels[api.WorkingDirLabel] = workingDir
+	svc.CustomLabels[api.OneoffLabel] = "False"
+	proj.Services[targetService] = svc
+
+	// Handle fixed container_name conflict and port occupation:
+	// If the service specifies a fixed container_name, Docker daemon rejects creating
+	// another container with the same name or binding the same port if the old one still exists.
+	// We temporarily rename & stop the old container, and remove it after successful Up (or restore if Up fails).
+	var oldContainerID string
+	var origContainerName string
+	var wasRunning bool
+	svcConfig, _ := proj.GetService(targetService)
+	if svcConfig.ContainerName != "" && o.dockerClient.Engine() != nil {
+		origContainerName = svcConfig.ContainerName
+		inspect, err := o.dockerClient.Engine().ContainerInspect(ctx, origContainerName, client.ContainerInspectOptions{})
+		if err == nil && inspect.Container.ID != "" {
+			oldContainerID = inspect.Container.ID
+			wasRunning = inspect.Container.State != nil && inspect.Container.State.Running
+			tempName := fmt.Sprintf("%s_ops_old_%d", origContainerName, time.Now().UnixNano()%1000000)
+			if _, renameErr := o.dockerClient.Engine().ContainerRename(ctx, oldContainerID, client.ContainerRenameOptions{NewName: tempName}); renameErr == nil {
+				if wasRunning {
+					_, _ = o.dockerClient.Engine().ContainerStop(ctx, oldContainerID, client.ContainerStopOptions{})
+				}
+				defer func() {
+					if upErr != nil {
+						_, _ = o.dockerClient.Engine().ContainerRename(ctx, oldContainerID, client.ContainerRenameOptions{NewName: origContainerName})
+						if wasRunning {
+							_, _ = o.dockerClient.Engine().ContainerStart(ctx, oldContainerID, client.ContainerStartOptions{})
+						}
+					} else {
+						_, _ = o.dockerClient.Engine().ContainerRemove(ctx, oldContainerID, client.ContainerRemoveOptions{Force: true})
+					}
+				}()
+			}
+		}
+	}
+
+	upErr = o.dockerClient.Compose().Up(ctx, proj, api.UpOptions{
 		Create: api.CreateOptions{
-			Services:             []string{service},
+			Services:             []string{targetService},
 			Recreate:             api.RecreateForce,
 			RecreateDependencies: api.RecreateNever,
 			Inherit:              true,
 		},
 		Start: api.StartOptions{
-			Services: []string{service},
+			Services: []string{targetService},
 		},
 	})
+	return upErr
 }
 
 func (o *Orchestrator) waitForHealthy(ctx context.Context, c *collector.ContainerInfo) (bool, string) {
@@ -373,7 +502,7 @@ func (o *Orchestrator) handleRollback(ctx context.Context, c *collector.Containe
 	}
 
 	// Recreate container with old configuration
-	_ = o.runComposeUp(ctx, composeFile, service)
+	_ = o.runComposeUp(ctx, composeFile, service, c.Project)
 
 	// Wait for rollback container to come back up healthy
 	_, _ = o.waitForHealthy(ctx, c)

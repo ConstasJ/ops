@@ -7,6 +7,8 @@ import (
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
+	"ops-go/pkg/collector"
+	"ops-go/pkg/domain"
 	"ops-go/pkg/orchestrator"
 )
 
@@ -15,6 +17,7 @@ var (
 	updateImageFlag  string
 	updateForceFlag  bool
 	updateDryRunFlag bool
+	updateYesFlag    bool
 )
 
 func newUpdateCommand() *cobra.Command {
@@ -34,6 +37,17 @@ func newUpdateCommand() *cobra.Command {
 				return fmt.Errorf("无法连接 Docker 守护进程: %w", err)
 			}
 
+			cfg, err := GetConfig()
+			if err != nil {
+				cfg = &domain.ContainersConfig{Specs: make(map[string]domain.ContainerSpec)}
+			}
+
+			col := collector.NewCollector(cli, cfg)
+			containers, err := col.ResolveTargets(ctx, args)
+			if err != nil {
+				return err
+			}
+
 			stateMgr := GetStateManager()
 			orch := orchestrator.NewOrchestrator(cli, stateMgr)
 
@@ -45,27 +59,28 @@ func newUpdateCommand() *cobra.Command {
 			}
 
 			hasError := false
-			for _, target := range args {
-				pterm.DefaultHeader.WithFullWidth().Println(fmt.Sprintf("开始执行受控更新: %s", target))
-				spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("正在处理 %s...", target))
+			for _, c := range containers {
+				targetLabel := c.StackService()
+				pterm.DefaultHeader.WithFullWidth().Println(fmt.Sprintf("开始执行受控更新: %s", targetLabel))
+				spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("正在处理 %s...", targetLabel))
 
-				report, err := orch.Update(ctx, target, opts)
+				report, err := orch.UpdateContainer(ctx, &c, opts)
 				if err != nil {
-					spinner.Fail(fmt.Sprintf("%s 更新失败: %v", target, err))
+					spinner.Fail(fmt.Sprintf("%s 更新失败: %v", targetLabel, err))
 					hasError = true
 					continue
 				}
 
 				switch report.Status {
 				case "skipped_identical":
-					spinner.Warning(fmt.Sprintf("%s 镜像已是最新，跳过更新", target))
+					spinner.Warning(fmt.Sprintf("%s 镜像已是最新，跳过更新", targetLabel))
 				case "dry_run":
 					spinner.Info(fmt.Sprintf("[预演] %s -> %s", report.OldImageRef, report.NewImageRef))
 				case "rolled_back":
-					spinner.Fail(fmt.Sprintf("%s 自动回滚完成: %s", target, report.Message))
+					spinner.Fail(fmt.Sprintf("%s 自动回滚完成: %s", targetLabel, report.Message))
 					hasError = true
 				default:
-					spinner.Success(fmt.Sprintf("%s 成功更新至 %s (耗时 %v)", target, report.NewImageRef, report.Duration.Round(time.Millisecond)))
+					spinner.Success(fmt.Sprintf("%s 成功更新至 %s (耗时 %v)", targetLabel, report.NewImageRef, report.Duration.Round(time.Millisecond)))
 				}
 			}
 
@@ -80,6 +95,7 @@ func newUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&updateImageFlag, "image", "i", "", "指定完整目标镜像 (例如: redis:7.2-alpine)")
 	cmd.Flags().BoolVarP(&updateForceFlag, "force", "f", false, "强制更新受保护的容器 (忽略 frozen / locked 限制)")
 	cmd.Flags().BoolVar(&updateDryRunFlag, "dry-run", false, "仅预演更新流程，不修改文件与容器")
+	cmd.Flags().BoolVarP(&updateYesFlag, "yes", "y", false, "自动确认执行，无需交互确认")
 
 	return cmd
 }

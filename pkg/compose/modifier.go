@@ -169,7 +169,9 @@ func (m *YamlModifier) UpdateImageTag(composeFile, serviceName, newImage string)
 				Content:  []byte(modifiedContent),
 			},
 		},
-	}, loader.WithSkipValidation)
+	}, loader.WithSkipValidation, func(opts *loader.Options) {
+		opts.SetProjectName("validation", true)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("modified compose YAML failed syntax validation: %w", err)
 	}
