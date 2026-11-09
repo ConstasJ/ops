@@ -14,6 +14,7 @@ import (
 	"ops-go/pkg/collector"
 	"ops-go/pkg/domain"
 	"ops-go/pkg/orchestrator"
+	"ops-go/pkg/notify"
 	"ops-go/pkg/registry"
 	"ops-go/pkg/report"
 )
@@ -24,6 +25,7 @@ func newUpgradeCommand() *cobra.Command {
 		yesFlag       bool
 		onlyAutoFlag  bool
 		forceFlag     bool
+		notifyFlag    bool
 		reportDirFlag string
 		concurrency   int
 	)
@@ -269,6 +271,22 @@ func newUpgradeCommand() *cobra.Command {
 				pterm.Warning.Printf("保存升级报告失败: %v\n", err)
 			}
 
+			if notifyFlag {
+				notifier := notify.NewFromEnv()
+				if notifier != nil {
+					pterm.Info.Println("正在向已配置渠道投递升级完成通知...")
+					notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if sendErr := notifier.Send(notifyCtx, "ops upgrade 批量升级通知", summary.GenerateMarkdown()); sendErr != nil {
+						pterm.Warning.Printf("通知投递失败: %v\n", sendErr)
+					} else {
+						pterm.Success.Println("通知已成功投递至各告警渠道")
+					}
+					notifyCancel()
+				} else {
+					pterm.Warning.Println("未检测到通知渠道配置（如 OPS_FEISHU_WEBHOOK、OPS_DINGTALK_WEBHOOK 或 SMTP_*）")
+				}
+			}
+
 			if hasError {
 				return fmt.Errorf("批量更新完成，但部分服务存在失败或回滚，请查阅报告: %s", reportPath)
 			}
@@ -282,6 +300,7 @@ func newUpgradeCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "免确认直接执行升级 (适用于自动化或 Cron 调度)")
 	cmd.Flags().BoolVar(&onlyAutoFlag, "only-auto", false, "仅升级配置为自动更新的容器 (wud.trigger 或 GuardAuto)")
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "强制更新受保护的容器 (忽略 frozen / locked 限制)")
+	cmd.Flags().BoolVar(&notifyFlag, "notify", false, "升级完成后自动向飞书/钉钉/Telegram/SMTP 发送通知报告")
 	cmd.Flags().StringVar(&reportDirFlag, "report-dir", "/var/lib/ops/reports", "Markdown 升级留痕报告归档目录")
 	cmd.Flags().IntVarP(&concurrency, "concurrency", "j", 5, "远端镜像探测并发度")
 

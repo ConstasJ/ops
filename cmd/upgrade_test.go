@@ -18,6 +18,7 @@ func TestUpgradeCommand_Registered(t *testing.T) {
 	assert.NotNil(t, upgradeCmd.Flags().Lookup("dry-run"))
 	assert.NotNil(t, upgradeCmd.Flags().Lookup("yes"))
 	assert.NotNil(t, upgradeCmd.Flags().Lookup("only-auto"))
+	assert.NotNil(t, upgradeCmd.Flags().Lookup("notify"))
 	assert.NotNil(t, upgradeCmd.Flags().Lookup("report-dir"))
 }
 
