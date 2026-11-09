@@ -55,4 +55,25 @@ services:
 	img, err = GetDeclaredImage([]string{composePath}, tmpDir, "redis")
 	require.NoError(t, err)
 	assert.Empty(t, img)
+
+	// Test 5: Folded scalar with required but missing variable returns empty (not >- or broken string)
+	dynamicContent := `
+services:
+  app:
+    image: >-
+      ghcr.io/org/repo:${MISSING_TAG:?missing}
+  redis:
+    image: redis:8-alpine
+`
+	dynamicPath := filepath.Join(tmpDir, "dynamic-compose.yml")
+	err = os.WriteFile(dynamicPath, []byte(dynamicContent), 0644)
+	require.NoError(t, err)
+
+	img, err = GetDeclaredImage([]string{dynamicPath}, tmpDir, "app")
+	require.NoError(t, err)
+	assert.Empty(t, img, "should not return >- or unresolved variable expression")
+
+	img, err = GetDeclaredImage([]string{dynamicPath}, tmpDir, "redis")
+	require.NoError(t, err)
+	assert.Equal(t, "redis:8-alpine", img)
 }

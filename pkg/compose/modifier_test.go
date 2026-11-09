@@ -134,4 +134,51 @@ func TestYamlModifier_UpdateImageTag(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, string(data), `image: "myapp:2.0"`)
 	})
+
+	t.Run("Succeeds when other services have required but missing environment variables", func(t *testing.T) {
+		envRequiredYAML := `services:
+  redis:
+    image: redis:8-alpine3.23
+  app:
+    image: myapp:1.0
+    environment:
+      SECRET: ${SECRET_KEY_MISSING:?must be set}
+`
+		envFile := filepath.Join(tmpDir, "missing-env.yml")
+		require.NoError(t, os.WriteFile(envFile, []byte(envRequiredYAML), 0644))
+
+		res, err := modifier.UpdateImageTag(envFile, "redis", "redis:8-alpine")
+		require.NoError(t, err)
+		assert.Equal(t, "redis:8-alpine3.23", res.OriginalImage)
+
+		data, err := os.ReadFile(envFile)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "image: redis:8-alpine")
+		assert.Contains(t, string(data), "${SECRET_KEY_MISSING:?must be set}")
+	})
+
+	t.Run("Successfully replaces folded block scalar images", func(t *testing.T) {
+		foldedYAML := `services:
+  web:
+    image: >-
+      ghcr.io/org/repo:${TAG:?must
+      be set}
+    ports:
+      - "3000:3000"
+`
+		foldedFile := filepath.Join(tmpDir, "folded-compose.yml")
+		require.NoError(t, os.WriteFile(foldedFile, []byte(foldedYAML), 0644))
+
+		res, err := modifier.UpdateImageTag(foldedFile, "web", "ghcr.io/org/repo:v1.2.3")
+		require.NoError(t, err)
+		assert.Equal(t, ">-", res.OriginalImage)
+
+		data, err := os.ReadFile(foldedFile)
+		require.NoError(t, err)
+		dataStr := string(data)
+		assert.Contains(t, dataStr, "image: ghcr.io/org/repo:v1.2.3")
+		assert.NotContains(t, dataStr, ">-")
+		assert.NotContains(t, dataStr, "be set}")
+		assert.Contains(t, dataStr, `- "3000:3000"`)
+	})
 }

@@ -3,16 +3,13 @@ package compose
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/compose-spec/compose-go/v2/loader"
-	"github.com/compose-spec/compose-go/v2/types"
+	"gopkg.in/yaml.v3"
 )
 
 // ModifyResult contains details of the YAML modification operation
@@ -35,6 +32,7 @@ var (
 	servicesHeaderRegex = regexp.MustCompile(`^services:\s*(#.*)?$`)
 	serviceNameRegex    = regexp.MustCompile(`^(\s*)(["']?[\w\-.]+["']?):\s*(#.*)?$`)
 	imageLineRegex      = regexp.MustCompile(`^(\s*image:\s*)(["']?)([^"'\s#]+)(["']?)(\s*#.*)?$`)
+	blockScalarRegex    = regexp.MustCompile(`^(\s*image:\s*)([>|][-+]?)(\s*#.*)?$`)
 )
 
 // UpdateImageTag updates the image of a specific service in composeFile and creates a backup
@@ -103,7 +101,42 @@ func (m *YamlModifier) UpdateImageTag(composeFile, serviceName, newImage string)
 				if indent <= targetServiceIndent {
 					inTargetService = false
 				} else {
-					// Check for image line
+					// Check if this line is a block scalar image declaration (e.g., image: >- or image: |)
+					matchesBlock := blockScalarRegex.FindStringSubmatch(line)
+					if len(matchesBlock) > 0 {
+						prefix := matchesBlock[1]
+						originalImage = matchesBlock[2]
+						comment := matchesBlock[3]
+
+						lines[i] = fmt.Sprintf("%s%s%s", prefix, newImage, comment)
+
+						// Delete all following lines that are part of this block scalar (indented deeper than image line)
+						imageIndent := indent
+						deleteCount := 0
+						for j := i + 1; j < len(lines); j++ {
+							nextLine := lines[j]
+							trimmedNext := strings.TrimSpace(nextLine)
+							if trimmedNext == "" {
+								deleteCount++
+								continue
+							}
+							nextIndent := len(nextLine) - len(strings.TrimLeft(nextLine, " "))
+							if nextIndent > imageIndent {
+								deleteCount++
+							} else {
+								break
+							}
+						}
+						if deleteCount > 0 {
+							lines = append(lines[:i+1], lines[i+1+deleteCount:]...)
+						}
+
+						found = true
+						inTargetService = false
+						break
+					}
+
+					// Check for single-line image
 					matches := imageLineRegex.FindStringSubmatch(line)
 					if len(matches) > 0 {
 						// matches: [0: full, 1: prefix, 2: openQuote, 3: image, 4: closeQuote, 5: comment]
@@ -159,20 +192,9 @@ func (m *YamlModifier) UpdateImageTag(composeFile, serviceName, newImage string)
 		modifiedContent += lineEnding
 	}
 
-	// Validate modified content with compose-go loader
-	ctx := context.Background()
-	_, err = loader.LoadWithContext(ctx, types.ConfigDetails{
-		WorkingDir: filepath.Dir(composeFile),
-		ConfigFiles: []types.ConfigFile{
-			{
-				Filename: composeFile,
-				Content:  []byte(modifiedContent),
-			},
-		},
-	}, loader.WithSkipValidation, func(opts *loader.Options) {
-		opts.SetProjectName("validation", true)
-	})
-	if err != nil {
+	// Validate modified content is valid YAML
+	var checkNode yaml.Node
+	if err := yaml.Unmarshal([]byte(modifiedContent), &checkNode); err != nil {
 		return nil, fmt.Errorf("modified compose YAML failed syntax validation: %w", err)
 	}
 
