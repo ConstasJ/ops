@@ -41,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newStatusCommand())
 	rootCmd.AddCommand(newLsCommand())
 	rootCmd.AddCommand(newNotesCommand())
+	rootCmd.AddCommand(newDoctorCommand())
 
 	return rootCmd
 }
