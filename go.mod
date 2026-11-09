@@ -3,6 +3,7 @@ module ops-go
 go 1.26.10
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/compose-spec/compose-go/v2 v2.16.2
 	github.com/docker/cli v29.9.3+incompatible
 	github.com/docker/compose/v5 v5.7.0
