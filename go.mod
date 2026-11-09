@@ -5,12 +5,16 @@ go 1.26.10
 require (
 	github.com/docker/cli v29.9.3+incompatible
 	github.com/docker/compose/v5 v5.7.0
-	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
+	github.com/pterm/pterm v0.12.84
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 )
 
 require (
+	atomicgo.dev/cursor v0.2.0 // indirect
+	atomicgo.dev/keyboard v0.2.10 // indirect
+	atomicgo.dev/schedule v0.1.0 // indirect
 	connectrpc.com/connect v1.19.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/DefangLabs/secret-detector v0.0.0-20260916192156-3e28d7ed64df // indirect
@@ -18,7 +22,7 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/compose-spec/compose-go/v2 v2.16.2 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.12.0 // indirect
@@ -55,12 +59,14 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/mattn/go-shellwords v1.0.16 // indirect
 	github.com/moby/buildkit v0.33.1 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/locker v1.0.1 // indirect
+	github.com/moby/moby/api v1.56.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
@@ -79,7 +85,6 @@ require (
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tilt-dev/fsnotify v1.4.8-0.20220602155310-fff9c274a375 // indirect
 	github.com/tonistiigi/fsutil v0.0.0-20260819142231-83cac42c1c52 // indirect
@@ -109,6 +114,7 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260825221802-da73d73af1c5 // indirect
