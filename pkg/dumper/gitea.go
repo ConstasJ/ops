@@ -38,11 +38,18 @@ func (d *GiteaDumper) Dump(ctx context.Context, c *collector.ContainerInfo, outD
 		"-f", tmpZip,
 	}
 
-	desc := "gitea dump --type db (仅导出数据库与配置)"
+	desc := "gitea dump --full (全量打包：数据库、仓库、LFS与附件)"
 	if !d.Full {
-		cmd = append(cmd, "--type", "db")
-	} else {
-		desc = "gitea dump --full (全量打包：数据库、仓库、LFS与附件)"
+		cmd = append(cmd,
+			"-R",
+			"--skip-log",
+			"--skip-attachment-data",
+			"--skip-lfs-data",
+			"--skip-package-data",
+			"--skip-index",
+			"--skip-custom-dir",
+		)
+		desc = "gitea dump (仅数据库与配置，跳过仓库/LFS/附件/索引)"
 	}
 
 	// 1. Run gitea dump as git user
