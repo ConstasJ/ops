@@ -306,7 +306,10 @@ func (o *Orchestrator) locateComposeFileAndService(c *collector.ContainerInfo) (
 		proj, err := loader.LoadWithContext(context.Background(), types.ConfigDetails{
 			WorkingDir:  filepath.Dir(composeFile),
 			ConfigFiles: []types.ConfigFile{{Filename: composeFile}},
-		}, loader.WithSkipValidation, func(opts *loader.Options) { opts.SetProjectName("res", true) })
+		}, loader.WithSkipValidation, func(opts *loader.Options) {
+			opts.SetProjectName("res", true)
+			opts.SkipInterpolation = true
+		})
 		if err == nil {
 			for name, svc := range proj.Services {
 				if svc.ContainerName == c.Name {
@@ -400,6 +403,8 @@ func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, ser
 		},
 	}, func(opts *loader.Options) {
 		opts.SetProjectName(projectName, true)
+		opts.SkipValidation = true
+		opts.SkipInterpolation = true
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load compose file %s: %w", composeFile, err)
