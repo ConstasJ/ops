@@ -3,11 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"ops-go/pkg/collector"
+	"ops-go/pkg/config"
 	"ops-go/pkg/domain"
 	"ops-go/pkg/dumper"
 )
@@ -60,10 +62,21 @@ func newDumpCommand() *cobra.Command {
 				}
 			}
 
+			appCfg := GetAppConfig()
+			var flagBackupDir string
+			if cmd.Flags().Changed("out") {
+				flagBackupDir = dumpBackupRootFlag
+			}
+			targetBackupRoot := config.ResolvePrecedence(flagBackupDir, os.Getenv("OPS_BACKUP_DIR"), appCfg.BackupDir, "/var/backups/ops")
+
+			if err := config.CheckDirWritable(targetBackupRoot); err != nil {
+				return err
+			}
+
 			pterm.DefaultHeader.WithFullWidth().Println(fmt.Sprintf("开始执行容器数据快照: %s", c.Name))
 			spinner, _ := pterm.DefaultSpinner.Start(fmt.Sprintf("正在备份 %s (%s)...", c.Name, c.Kind))
 
-			outDir, err := dumper.CreateBackupDir(dumpBackupRootFlag, c.Name)
+			outDir, err := dumper.CreateBackupDir(targetBackupRoot, c.Name)
 			if err != nil {
 				spinner.Fail(fmt.Sprintf("创建备份目录失败: %v", err))
 				return err

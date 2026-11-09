@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Notifier 消息发送器接口
@@ -47,7 +48,9 @@ func (m *MultiNotifier) Send(ctx context.Context, title, body string) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := n.Send(ctx, title, body); err != nil {
+			sendCtx, sendCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer sendCancel()
+			if err := n.Send(sendCtx, title, body); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -62,41 +65,89 @@ func (m *MultiNotifier) Send(ctx context.Context, title, body string) error {
 	return nil
 }
 
-// NewFromEnv 自动读取当前运行环境中的 Webhook 和 SMTP 配置构建 Notifier
-func NewFromEnv() Notifier {
+// NotifyOptions 允许外部传入已解析的配置文件中的通知选项
+type NotifyOptions struct {
+	FeishuWebhook   string
+	DingTalkWebhook string
+	WebhookURL      string
+	TelegramToken   string
+	TelegramChatID  string
+	SMTPHost        string
+	SMTPPort        string
+	SMTPUser        string
+	SMTPPass        string
+	SMTPFrom        string
+	SMTPTo          []string
+}
+
+// NewFromEnvOrOptions 按照 环境变量 > 配置选项 的优先级装配通知器
+func NewFromEnvOrOptions(opts *NotifyOptions) Notifier {
 	var list []Notifier
 
 	// 1. 飞书 Webhook
-	if url := os.Getenv("OPS_FEISHU_WEBHOOK"); url != "" {
-		list = append(list, NewWebhookNotifier(url, WebhookTypeFeishu))
+	feishuURL := os.Getenv("OPS_FEISHU_WEBHOOK")
+	if feishuURL == "" && opts != nil {
+		feishuURL = opts.FeishuWebhook
+	}
+	if feishuURL != "" {
+		list = append(list, NewWebhookNotifier(feishuURL, WebhookTypeFeishu))
 	}
 
 	// 2. 钉钉 Webhook
-	if url := os.Getenv("OPS_DINGTALK_WEBHOOK"); url != "" {
-		list = append(list, NewWebhookNotifier(url, WebhookTypeDingTalk))
+	dingURL := os.Getenv("OPS_DINGTALK_WEBHOOK")
+	if dingURL == "" && opts != nil {
+		dingURL = opts.DingTalkWebhook
+	}
+	if dingURL != "" {
+		list = append(list, NewWebhookNotifier(dingURL, WebhookTypeDingTalk))
 	}
 
 	// 3. 通用/Slack Webhook
-	if url := os.Getenv("OPS_WEBHOOK_URL"); url != "" {
-		typ := DetectWebhookType(url)
-		list = append(list, NewWebhookNotifier(url, typ))
+	genericURL := os.Getenv("OPS_WEBHOOK_URL")
+	if genericURL == "" && opts != nil {
+		genericURL = opts.WebhookURL
+	}
+	if genericURL != "" {
+		typ := DetectWebhookType(genericURL)
+		list = append(list, NewWebhookNotifier(genericURL, typ))
 	}
 
 	// 4. Telegram Bot
-	botToken := os.Getenv("OPS_TELEGRAM_BOT_TOKEN")
-	chatID := os.Getenv("OPS_TELEGRAM_CHAT_ID")
-	if botToken != "" && chatID != "" {
-		tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
-		list = append(list, NewTelegramNotifier(tgURL, chatID))
+	tgToken := os.Getenv("OPS_TELEGRAM_BOT_TOKEN")
+	tgChatID := os.Getenv("OPS_TELEGRAM_CHAT_ID")
+	if (tgToken == "" || tgChatID == "") && opts != nil {
+		if tgToken == "" {
+			tgToken = opts.TelegramToken
+		}
+		if tgChatID == "" {
+			tgChatID = opts.TelegramChatID
+		}
+	}
+	if tgToken != "" && tgChatID != "" {
+		tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", tgToken)
+		list = append(list, NewTelegramNotifier(tgURL, tgChatID))
 	}
 
-	// 5. SMTP 邮件 (兼容 /etc/restic/smtp.env)
-	if smtpHost := os.Getenv("SMTP_HOST"); smtpHost != "" {
-		smtpUser := os.Getenv("SMTP_USER")
-		smtpPass := os.Getenv("SMTP_PASS")
-		smtpFrom := os.Getenv("SMTP_FROM")
-		smtpTo := os.Getenv("SMTP_TO")
-		smtpPort := os.Getenv("SMTP_PORT")
+	// 5. SMTP 邮件 (兼容 /etc/restic/smtp.env 与 opts)
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpUser := os.Getenv("SMTP_USER")
+	smtpPass := os.Getenv("SMTP_PASS")
+	smtpFrom := os.Getenv("SMTP_FROM")
+	smtpTo := os.Getenv("SMTP_TO")
+
+	if smtpHost == "" && opts != nil {
+		smtpHost = opts.SMTPHost
+		smtpPort = opts.SMTPPort
+		smtpUser = opts.SMTPUser
+		smtpPass = opts.SMTPPass
+		smtpFrom = opts.SMTPFrom
+		if len(opts.SMTPTo) > 0 {
+			smtpTo = strings.Join(opts.SMTPTo, ",")
+		}
+	}
+
+	if smtpHost != "" {
 		if smtpPort == "" {
 			smtpPort = "587"
 		}
@@ -120,4 +171,9 @@ func NewFromEnv() Notifier {
 		return nil
 	}
 	return NewMultiNotifier(list...)
+}
+
+// NewFromEnv 仅从环境变量与 .env 读取配置构建 Notifier
+func NewFromEnv() Notifier {
+	return NewFromEnvOrOptions(nil)
 }

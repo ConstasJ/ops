@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"ops-go/pkg/collector"
+	"ops-go/pkg/config"
 	"ops-go/pkg/domain"
 	"ops-go/pkg/orchestrator"
 	"ops-go/pkg/notify"
@@ -168,6 +169,14 @@ func newUpgradeCommand() *cobra.Command {
 			_ = pterm.DefaultTable.WithHasHeader().WithBoxed().WithData(planTable).Render()
 			pterm.Println()
 
+			// 解析报告归档目录优先级: Flag > OPS_REPORT_DIR > ConfigFile > FHS标准(/var/log/ops)
+			appCfg := GetAppConfig()
+			var flagReportDir string
+			if cmd.Flags().Changed("report-dir") {
+				flagReportDir = reportDirFlag
+			}
+			targetReportDir := config.ResolvePrecedence(flagReportDir, os.Getenv("OPS_REPORT_DIR"), appCfg.ReportDir, "/var/log/ops")
+
 			// 如果是 dry-run 模式
 			startTime := time.Now()
 			if dryRunFlag {
@@ -187,11 +196,28 @@ func newUpgradeCommand() *cobra.Command {
 						Duration: 10 * time.Millisecond,
 					})
 				}
-				reportPath, saveErr := summary.Save(reportDirFlag)
+				reportPath, saveErr := summary.Save(targetReportDir)
 				if saveErr == nil {
 					pterm.Success.Printf("预演报告已生成: %s\n", reportPath)
 				}
 				return nil
+			}
+
+			// 前置权限门禁预检 (Preflight Check)
+			targetStatePath := resolvedState
+			if targetStatePath == "" {
+				targetStatePath = "/var/lib/ops/state.json"
+			}
+			if err := config.CheckFileWritable(targetStatePath); err != nil {
+				return err
+			}
+			if err := config.CheckDirWritable(targetReportDir); err != nil {
+				// 若 /var/log/ops 权限受限，尝试平滑回退到 /var/lib/ops/reports
+				if fallbackErr := config.CheckDirWritable("/var/lib/ops/reports"); fallbackErr == nil {
+					targetReportDir = "/var/lib/ops/reports"
+				} else {
+					return err
+				}
 			}
 
 			// 确认模式
@@ -262,9 +288,9 @@ func newUpgradeCommand() *cobra.Command {
 			}
 
 			summary.EndTime = time.Now()
-			reportPath, err := summary.Save(reportDirFlag)
+			reportPath, err := summary.Save(targetReportDir)
 			if err == nil {
-				_ = report.PruneReports(reportDirFlag, 20)
+				_ = report.PruneReports(targetReportDir, 20)
 				pterm.Println()
 				pterm.Success.Printf("升级留痕报告已归档: %s\n", reportPath)
 			} else {
@@ -272,7 +298,20 @@ func newUpgradeCommand() *cobra.Command {
 			}
 
 			if notifyFlag {
-				notifier := notify.NewFromEnv()
+				notifyOpts := &notify.NotifyOptions{
+					FeishuWebhook:   appCfg.Notify.FeishuWebhook,
+					DingTalkWebhook: appCfg.Notify.DingTalkWebhook,
+					WebhookURL:      appCfg.Notify.WebhookURL,
+					TelegramToken:   appCfg.Notify.Telegram.BotToken,
+					TelegramChatID:  appCfg.Notify.Telegram.ChatID,
+					SMTPHost:        appCfg.Notify.SMTP.Host,
+					SMTPPort:        appCfg.Notify.SMTP.Port,
+					SMTPUser:        appCfg.Notify.SMTP.Username,
+					SMTPPass:        appCfg.Notify.SMTP.Password,
+					SMTPFrom:        appCfg.Notify.SMTP.From,
+					SMTPTo:          appCfg.Notify.SMTP.To,
+				}
+				notifier := notify.NewFromEnvOrOptions(notifyOpts)
 				if notifier != nil {
 					pterm.Info.Println("正在向已配置渠道投递升级完成通知...")
 					notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 10*time.Second)

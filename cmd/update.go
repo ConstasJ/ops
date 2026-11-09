@@ -8,6 +8,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 	"ops-go/pkg/collector"
+	"ops-go/pkg/config"
 	"ops-go/pkg/domain"
 	"ops-go/pkg/orchestrator"
 )
@@ -49,6 +50,15 @@ func newUpdateCommand() *cobra.Command {
 			}
 
 			stateMgr := GetStateManager()
+			if !updateDryRunFlag {
+				targetStatePath := resolvedState
+				if targetStatePath == "" {
+					targetStatePath = "/var/lib/ops/state.json"
+				}
+				if err := config.CheckFileWritable(targetStatePath); err != nil {
+					return err
+				}
+			}
 			orch := orchestrator.NewOrchestrator(cli, stateMgr)
 
 			opts := orchestrator.UpdateOptions{
