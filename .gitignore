@@ -13,3 +13,9 @@ coverage.out
 .idea/
 .vscode/
 *.swp
+
+# Environment & Config
+.env
+.env.*
+*.local
+*.log

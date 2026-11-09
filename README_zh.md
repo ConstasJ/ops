@@ -104,29 +104,53 @@ services:
 
 ---
 
-## ⚙️ 配置文件说明 (`containers.json`)
+## ⚙️ 配置文件说明 (`ops.yaml` / `ops.toml` / `containers.json`)
 
-除了 Docker Labels，`ops` 同样支持中央知识库 `containers.json`（默认位于 `/etc/ops/containers.json` 或 `/opt/ops/containers.json`）：
+`ops` 支持通过 YAML、TOML 或 JSON 进行集中式全局配置，并遵循 FHS 标准自动查找：
+1. 命令行标志 `--config <path>` 或环境变量 `OPS_CONFIG`
+2. 当前目录 `./ops.yaml`、`./ops.toml`、`./ops.json`
+3. 系统配置目录 `/etc/ops/ops.yaml`、`/etc/ops/ops.toml`、`/etc/ops/containers.json`
+4. 历史兼容路径 `/opt/ops/containers.json`
 
-```json
-{
-  "_comment": "ops 容器知识库配置",
-  "linknet-db-1": {
-    "kind": "postgres",
-    "guard": "db",
-    "probe": {
-      "tcp": ":5432"
-    },
-    "timeout": 180,
-    "settle": 15,
-    "notes": "生产 PostgreSQL 主库"
-  },
-  "suwayomi": {
-    "guard": "auto",
-    "timeout": 60
-  }
-}
+### 配置优先级机制：
+$$\text{命令行参数 (Flags)} > \text{系统环境变量 (OS Env)} > \text{.env 文件} > \text{显式配置文件} > \text{内置默认值}$$
+
+### 全量配置范例 (`/etc/ops/ops.yaml`)：
+
+```yaml
+docker_host: "unix:///var/run/docker.sock"
+state_file: "/var/lib/ops/state.json"
+backup_dir: "/var/backups/ops"
+
+notify:
+  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+  dingtalk_webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+  telegram:
+    bot_token: "123456:ABC-DEF1234ghIkl"
+    chat_id: "-10012345678"
+  smtp:
+    host: "smtp.example.com"
+    port: 465
+    user: "ops-alert@example.com"
+    pass: "secret"
+    to:
+      - "admin@example.com"
+
+containers:
+  linknet-db-1:
+    kind: "postgres"
+    guard: "db"
+    probe:
+      tcp: ":5432"
+    timeout: 180
+    settle: 15
+    notes: "生产 PostgreSQL 主库"
+  suwayomi:
+    guard: "auto"
+    timeout: 60
 ```
+
+> **容器策略生效优先级**：Docker Labels > 配置文件 (`containers`) > 启发式智能推断。
 
 > **配置优先级**：Docker Labels > `containers.json` > 启发式推断。
 

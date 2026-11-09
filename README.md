@@ -104,27 +104,50 @@ services:
 
 ---
 
-## ⚙️ Configuration File (`containers.json`)
+## ⚙️ Configuration (`ops.yaml` / `ops.toml` / `containers.json`)
 
-`ops` also supports a centralized policy repository (`/etc/ops/containers.json` or `/opt/ops/containers.json`):
+`ops` supports centralized configuration via YAML, TOML, or JSON format. It searches standard locations following FHS guidelines:
+1. `--config <path>` flag or `OPS_CONFIG` environment variable
+2. `./ops.yaml`, `./ops.toml`, `./ops.json` (Current working directory)
+3. `/etc/ops/ops.yaml`, `/etc/ops/ops.toml`, `/etc/ops/containers.json` (System-wide)
+4. `/opt/ops/containers.json` (Legacy backward compatibility)
 
-```json
-{
-  "_comment": "ops central containers registry",
-  "linknet-db-1": {
-    "kind": "postgres",
-    "guard": "db",
-    "probe": {
-      "tcp": ":5432"
-    },
-    "timeout": 180,
-    "settle": 15,
-    "notes": "Production PostgreSQL cluster"
-  }
-}
+### Configuration Precedence:
+$$\text{CLI Flags} > \text{OS Environment Variables} > \text{.env File} > \text{Config File} > \text{Defaults}$$
+
+### Full Configuration Example (`/etc/ops/ops.yaml`):
+
+```yaml
+docker_host: "unix:///var/run/docker.sock"
+state_file: "/var/lib/ops/state.json"
+backup_dir: "/var/backups/ops"
+
+notify:
+  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+  dingtalk_webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+  telegram:
+    bot_token: "123456:ABC-DEF1234ghIkl"
+    chat_id: "-10012345678"
+  smtp:
+    host: "smtp.example.com"
+    port: 465
+    user: "ops-alert@example.com"
+    pass: "secret"
+    to:
+      - "admin@example.com"
+
+containers:
+  postgres-db:
+    kind: "postgres"
+    guard: "db"
+    probe:
+      tcp: ":5432"
+    timeout: 180
+    settle: 15
+    notes: "Production PostgreSQL cluster"
 ```
 
-> **Precedence**: Docker Labels > `containers.json` > Heuristic Inference.
+> **Container Policy Precedence**: Docker Labels > Config File (`containers`) > Heuristic Inference.
 
 ---
 
