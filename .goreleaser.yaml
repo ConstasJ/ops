@@ -1,0 +1,53 @@
+version: 2
+
+project_name: ops
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ops
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X ops-go/cmd.Version={{.Version}}
+      - -X ops-go/cmd.GitCommit={{.Commit}}
+      - -X ops-go/cmd.BuildDate={{.Date}}
+    binary: ops
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - README_zh.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
