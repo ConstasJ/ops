@@ -1,0 +1,15 @@
+# Binaries
+bin/
+dist/
+ops
+ops.exe
+ops-*
+
+# Test artifacts
+coverage.out
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
