@@ -11,7 +11,9 @@ import (
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/api"
+	"github.com/joho/godotenv"
 	"github.com/moby/moby/client"
+	"os"
 
 	"ops-go/pkg/collector"
 	"ops-go/pkg/compose"
@@ -267,6 +269,16 @@ func (o *Orchestrator) UpdateContainer(ctx context.Context, c *collector.Contain
 	return report, nil
 }
 
+func loadDirEnv(dir string) types.Mapping {
+	env := types.NewMapping(os.Environ())
+	if envMap, err := godotenv.Read(filepath.Join(dir, ".env")); err == nil {
+		for k, v := range envMap {
+			env[k] = v
+		}
+	}
+	return env
+}
+
 func (o *Orchestrator) locateComposeFileAndService(c *collector.ContainerInfo) (string, string, error) {
 	serviceName := c.Service
 	if serviceName == "" {
@@ -303,12 +315,13 @@ func (o *Orchestrator) locateComposeFileAndService(c *collector.ContainerInfo) (
 
 	// If serviceName equals container name, try to map to actual compose service name
 	if serviceName == c.Name {
+		wDir := filepath.Dir(composeFile)
 		proj, err := loader.LoadWithContext(context.Background(), types.ConfigDetails{
-			WorkingDir:  filepath.Dir(composeFile),
+			WorkingDir:  wDir,
 			ConfigFiles: []types.ConfigFile{{Filename: composeFile}},
+			Environment: loadDirEnv(wDir),
 		}, loader.WithSkipValidation, func(opts *loader.Options) {
 			opts.SetProjectName("res", true)
-			opts.SkipInterpolation = true
 		})
 		if err == nil {
 			for name, svc := range proj.Services {
@@ -396,15 +409,14 @@ func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, ser
 		projectName = filepath.Base(filepath.Dir(composeFile))
 	}
 
+	workingDir := filepath.Dir(composeFile)
 	proj, err := loader.LoadWithContext(ctx, types.ConfigDetails{
-		WorkingDir: filepath.Dir(composeFile),
-		ConfigFiles: []types.ConfigFile{
-			{Filename: composeFile},
-		},
+		WorkingDir:  workingDir,
+		ConfigFiles: []types.ConfigFile{{Filename: composeFile}},
+		Environment: loadDirEnv(workingDir),
 	}, func(opts *loader.Options) {
 		opts.SetProjectName(projectName, true)
 		opts.SkipValidation = true
-		opts.SkipInterpolation = true
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load compose file %s: %w", composeFile, err)
@@ -433,7 +445,7 @@ func (o *Orchestrator) runComposeUp(ctx context.Context, composeFile string, ser
 	}
 
 	absComposeFile, _ := filepath.Abs(composeFile)
-	workingDir := filepath.Dir(absComposeFile)
+	workingDir = filepath.Dir(absComposeFile)
 	svc := proj.Services[targetService]
 	if svc.CustomLabels == nil {
 		svc.CustomLabels = make(map[string]string)
