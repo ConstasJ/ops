@@ -192,8 +192,8 @@ func EvaluateUpdate(currentRef string, remoteTags []string, currentDigest, remot
 
 // CompareImageRefs 比较两个镜像引用的版本差异类型（major / minor / patch / digest / compose）
 func CompareImageRefs(currentRef, targetRef string) UpdateCandidate {
-	_, currTag, _ := ParseImageReference(currentRef)
-	_, targetTag, _ := ParseImageReference(targetRef)
+	currRepo, currTag, _ := ParseImageReference(currentRef)
+	targetRepo, targetTag, _ := ParseImageReference(targetRef)
 	if currTag == "" {
 		currTag = "latest"
 	}
@@ -206,6 +206,12 @@ func CompareImageRefs(currentRef, targetRef string) UpdateCandidate {
 
 	updateType := UpdateCompose
 	reason := "Compose 声明已变更"
+
+	displayTarget := targetTag
+	if currRepo != targetRepo && currRepo != "" && targetRepo != "" {
+		reason = "Compose 镜像仓库声明变更"
+		displayTarget = targetRef
+	}
 
 	if currInfo != nil && targetInfo != nil {
 		if targetInfo.version.GreaterThan(currInfo.version) {
@@ -227,7 +233,7 @@ func CompareImageRefs(currentRef, targetRef string) UpdateCandidate {
 	return UpdateCandidate{
 		HasUpdate:  true,
 		CurrentTag: currTag,
-		TargetTag:  targetTag,
+		TargetTag:  displayTarget,
 		UpdateType: updateType,
 		Reason:     reason,
 	}

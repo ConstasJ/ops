@@ -76,4 +76,12 @@ services:
 	img, err = GetDeclaredImage([]string{dynamicPath}, tmpDir, "redis")
 	require.NoError(t, err)
 	assert.Equal(t, "redis:8-alpine", img)
+
+	// Test 6: Folded scalar with variable provided in .env correctly expands
+	envFile := filepath.Join(tmpDir, ".env")
+	require.NoError(t, os.WriteFile(envFile, []byte("MISSING_TAG=v1.2.3\n"), 0644))
+
+	img, err = GetDeclaredImage([]string{dynamicPath}, tmpDir, "app")
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/org/repo:v1.2.3", img, "should expand variable from .env even with :? modifier")
 }

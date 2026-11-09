@@ -47,6 +47,7 @@ func GetDeclaredImage(composeFiles []string, workingDir string, serviceName stri
 		project, err := loader.LoadWithContext(ctx, types.ConfigDetails{
 			WorkingDir:  wDir,
 			ConfigFiles: existingFiles,
+			Environment: loadDirEnv(wDir),
 		}, loader.WithSkipValidation, func(opts *loader.Options) {
 			opts.SetProjectName("declared-reader", true)
 		})
@@ -106,17 +107,32 @@ func extractImageFromYaml(path, serviceName string, envMap map[string]string) st
 	return ""
 }
 
+func loadDirEnv(dir string) types.Mapping {
+	env := types.NewMapping(os.Environ())
+	if dir != "" {
+		if envMap, err := godotenv.Read(filepath.Join(dir, ".env")); err == nil {
+			for k, v := range envMap {
+				env[k] = v
+			}
+		}
+	}
+	return env
+}
+
 func expandEnv(s string, envMap map[string]string) string {
 	return os.Expand(s, func(key string) string {
-		// Handle default values like ${VAR:-default}
 		cleanKey := key
 		defaultVal := ""
-		if idx := strings.Index(key, ":-"); idx != -1 {
-			cleanKey = key[:idx]
-			defaultVal = key[idx+2:]
-		} else if idx := strings.Index(key, "-"); idx != -1 {
-			cleanKey = key[:idx]
-			defaultVal = key[idx+1:]
+
+		// Handle variable modifiers: :-, -, :?, ?, :=, =, :+, +
+		for _, sep := range []string{":-", "-", ":?", "?", ":=", "=", ":+", "+"} {
+			if idx := strings.Index(key, sep); idx != -1 {
+				cleanKey = key[:idx]
+				if sep == ":-" || sep == "-" || sep == ":=" || sep == "=" {
+					defaultVal = key[idx+len(sep):]
+				}
+				break
+			}
 		}
 
 		if val, exists := envMap[cleanKey]; exists && val != "" {
